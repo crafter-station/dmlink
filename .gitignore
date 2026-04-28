@@ -1,6 +1,9 @@
 *-debug.log
 *-error.log
 **/.DS_Store
+.env
+.env.*
+!.env.example
 /.idea
 /dist
 /tmp
