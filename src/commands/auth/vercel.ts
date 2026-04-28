@@ -4,9 +4,11 @@ import * as p from '@clack/prompts'
 import {getConfigPath, maskSecret, updateConfig} from '../../lib/config.js'
 import {jsonFlag} from '../../lib/flags.js'
 import {createOutput, outputError} from '../../lib/output.js'
+import {listGlobalVercelTokens, type GlobalVercelToken} from '../../lib/vercel-auth.js'
 import {createVercelClient, type VercelTeam} from '../../lib/vercel.js'
 
 const PERSONAL_ACCOUNT = '__personal__'
+const NEW_TOKEN = '__new_token__'
 
 function assertValue(value: unknown, message: string): string {
   if (typeof value === 'string' && value.trim()) return value.trim()
@@ -16,6 +18,37 @@ function assertValue(value: unknown, message: string): string {
 function teamLabel(team: VercelTeam): string {
   const name = team.name ?? team.slug
   return `${name} (${team.id})`
+}
+
+function globalTokenLabel(token: GlobalVercelToken): string {
+  return token.source === 'environment' ? `Use ${token.label}` : `Use ${token.label} token`
+}
+
+async function promptVercelToken(globalTokens: GlobalVercelToken[]): Promise<string | null> {
+  if (globalTokens.length > 0) {
+    const selected = await p.select({
+      message: 'Vercel token',
+      options: [
+        ...globalTokens.map((token, index) => ({label: globalTokenLabel(token), value: String(index), hint: maskSecret(token.token)})),
+        {label: 'Enter a new token', value: NEW_TOKEN},
+      ],
+    })
+
+    if (p.isCancel(selected)) {
+      p.cancel('Cancelled')
+      return null
+    }
+
+    if (selected !== NEW_TOKEN) return globalTokens[Number(selected)]?.token ?? null
+  }
+
+  const value = await p.password({message: 'Vercel token'})
+  if (p.isCancel(value)) {
+    p.cancel('Cancelled')
+    return null
+  }
+
+  return value
 }
 
 export default class AuthVercel extends Command {
@@ -33,19 +66,19 @@ export default class AuthVercel extends Command {
 
     try {
       let token = flags.token
-      let teamId = flags['team-id']
+      let teamId = flags['team-id'] || process.env.VERCEL_TEAM_ID?.trim() || undefined
+      const globalTokens = token ? [] : await listGlobalVercelTokens()
 
-      if (!out.json && !token) {
-        const value = await p.password({message: 'Vercel token'})
-        if (p.isCancel(value)) {
-          p.cancel('Cancelled')
-          return
+      if (!token) {
+        if (out.json) {
+          token = globalTokens[0]?.token
+        } else {
+          token = (await promptVercelToken(globalTokens)) ?? undefined
+          if (!token) return
         }
-
-        token = value
       }
 
-      token = assertValue(token, 'Missing Vercel token. Pass --token or set VERCEL_TOKEN.')
+      token = assertValue(token, 'Missing Vercel token. Pass --token, set VERCEL_TOKEN, or sign in with Vercel CLI.')
 
       if (!out.json && teamId === undefined) {
         const spinner = p.spinner()

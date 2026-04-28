@@ -1,6 +1,10 @@
+import {mkdtempSync, mkdirSync, rmSync, writeFileSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+
 import {expect} from 'chai'
 
-import {createVercelClient} from '../../src/lib/vercel.js'
+import {createVercelClient, resolveVercelConfig} from '../../src/lib/vercel.js'
 
 function jsonResponse(body: unknown): Response {
   return {json: async () => body, ok: true, status: 200} as Response
@@ -8,9 +12,11 @@ function jsonResponse(body: unknown): Response {
 
 describe('vercel client', () => {
   const originalFetch = globalThis.fetch
+  const originalEnv = {...process.env}
 
   afterEach(() => {
     globalThis.fetch = originalFetch
+    process.env = {...originalEnv}
   })
 
   it('lists teams from the token without scoping the request to a team', async () => {
@@ -41,5 +47,25 @@ describe('vercel client', () => {
       {id: 'team_a', name: 'Alpha', role: 'OWNER', slug: 'alpha'},
       {id: 'team_b', name: 'Beta', role: 'MEMBER', slug: 'beta'},
     ])
+  })
+
+  it('resolves Vercel CLI auth when no local credentials are saved', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'doomain-vercel-config-'))
+
+    try {
+      process.env = {...originalEnv, DOOMAIN_CONFIG_FILE: join(dir, 'doomain.json'), XDG_DATA_HOME: join(dir, 'data')}
+      delete process.env.VERCEL_TOKEN
+      delete process.env.VERCEL_TEAM_ID
+
+      const authDir = join(dir, 'data', 'com.vercel.cli')
+      mkdirSync(authDir, {recursive: true})
+      writeFileSync(join(authDir, 'auth.json'), JSON.stringify({token: 'cli_token'}))
+
+      const config = await resolveVercelConfig()
+      expect(config.token).to.equal('cli_token')
+      expect(config.teamId).to.equal(undefined)
+    } finally {
+      rmSync(dir, {force: true, recursive: true})
+    }
   })
 })

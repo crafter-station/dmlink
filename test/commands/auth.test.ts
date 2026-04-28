@@ -41,4 +41,17 @@ describe('auth', () => {
     expect(config.providers).to.deep.equal({cloudflare: {credentials: {accountId: 'account_123', apiToken: 'cloudflare_token'}}})
     expect(config.defaults).to.deep.equal({domain: 'example.com', provider: 'cloudflare'})
   })
+
+  it('saves Vercel credentials from VERCEL_TOKEN in JSON mode', async () => {
+    process.env.VERCEL_TOKEN = 'env_vercel_token'
+    process.env.VERCEL_TEAM_ID = 'team_env'
+
+    const {stdout} = await runCommand('auth vercel --json')
+    const result = JSON.parse(stdout) as {data: {vercel: {teamId?: string; token?: string}}; ok: boolean}
+    const config = await loadConfig()
+
+    expect(result.ok).to.equal(true)
+    expect(result.data.vercel).to.deep.equal({teamId: 'team_env', token: 'env_...oken'})
+    expect(config.vercel).to.deep.equal({teamId: 'team_env', token: 'env_vercel_token'})
+  })
 })

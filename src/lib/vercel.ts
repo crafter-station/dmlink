@@ -1,5 +1,6 @@
 import {loadConfig} from './config.js'
 import {DoomainError} from './errors.js'
+import {listGlobalVercelTokens} from './vercel-auth.js'
 
 const VERCEL_API_URL = 'https://api.vercel.com'
 export const VERCEL_APEX_A_RECORD = '76.76.21.21'
@@ -66,11 +67,11 @@ interface VercelTeamsResponse {
 
 export async function resolveVercelConfig(): Promise<VercelConfig> {
   const config = await loadConfig()
-  const token = process.env.VERCEL_TOKEN || config.vercel?.token
+  const token = process.env.VERCEL_TOKEN || config.vercel?.token || (await listGlobalVercelTokens())[0]?.token
   const teamId = process.env.VERCEL_TEAM_ID || config.vercel?.teamId
 
   if (!token) {
-    throw new DoomainError('MISSING_CREDENTIALS', 'Missing Vercel token. Run `doomain auth vercel` or set VERCEL_TOKEN.')
+    throw new DoomainError('MISSING_CREDENTIALS', 'Missing Vercel token. Run `doomain auth vercel`, set VERCEL_TOKEN, or sign in with Vercel CLI.')
   }
 
   return {token, teamId}

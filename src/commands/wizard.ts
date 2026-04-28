@@ -1,7 +1,7 @@
 import {Command} from '@oclif/core'
 import * as p from '@clack/prompts'
 
-import {loadConfig, updateConfig} from '../lib/config.js'
+import {loadConfig, maskSecret, updateConfig} from '../lib/config.js'
 import {DoomainError} from '../lib/errors.js'
 import {jsonFlag} from '../lib/flags.js'
 import {createLinkPlan, linkDomain} from '../lib/link-domain.js'
@@ -10,9 +10,12 @@ import {createOutput, outputError} from '../lib/output.js'
 import {createProvider, getProviderDefinition, listProviderDefinitions} from '../lib/providers/registry.js'
 import {isProviderConfigured} from '../lib/providers/status.js'
 import type {CredentialDefinition, DnsProviderDefinition, DnsRecordInput, DnsZone} from '../lib/providers/types.js'
+import {listGlobalVercelTokens, type GlobalVercelToken} from '../lib/vercel-auth.js'
 import {createVercelClient, type VercelTeam} from '../lib/vercel.js'
 
 const PERSONAL_ACCOUNT = '__personal__'
+const NEW_TOKEN = '__new_token__'
+const SAVED_TOKEN = '__saved_token__'
 
 function cancelIfNeeded<T>(value: T | symbol): T | null {
   if (p.isCancel(value)) {
@@ -127,6 +130,32 @@ function teamLabel(team: VercelTeam): string {
   return `${name} (${team.id})`
 }
 
+function globalTokenLabel(token: GlobalVercelToken): string {
+  return token.source === 'environment' ? `Use ${token.label}` : `Use ${token.label} token`
+}
+
+async function promptVercelToken(globalTokens: GlobalVercelToken[], savedToken?: string): Promise<string | null> {
+  if (globalTokens.length > 0) {
+    const selected = await p.select({
+      message: 'Vercel token',
+      options: [
+        ...globalTokens.map((token, index) => ({label: globalTokenLabel(token), value: String(index), hint: maskSecret(token.token)})),
+        ...(savedToken && !globalTokens.some((token) => token.token === savedToken)
+          ? [{label: 'Use saved Doomain token', value: SAVED_TOKEN, hint: maskSecret(savedToken)}]
+          : []),
+        {label: 'Enter a new token', value: NEW_TOKEN},
+      ],
+    })
+
+    const resolved = cancelIfNeeded(selected)
+    if (resolved === null) return null
+    if (resolved === SAVED_TOKEN) return savedToken ?? null
+    if (resolved !== NEW_TOKEN) return globalTokens[Number(resolved)]?.token ?? null
+  }
+
+  return promptRequired('Vercel token', {password: true})
+}
+
 function recordPreview(record: DnsRecordInput, providerName: string): string {
   const name = record.name === '@' ? 'root' : record.name
   return `DNS: ${record.type} ${name} -> ${record.value} in ${providerName}`
@@ -160,13 +189,14 @@ export default class Wizard extends Command {
       const config = await loadConfig()
       const providerDefinitions = listProviderDefinitions()
       const localProject = detectLocalVercelProject()
-      let vercelToken = process.env.VERCEL_TOKEN || config.vercel?.token
+      const globalVercelTokens = await listGlobalVercelTokens()
+      let vercelToken = config.vercel?.token
       let vercelTeamId = process.env.VERCEL_TEAM_ID || localProject?.orgId || config.vercel?.teamId
       const defaultProvider = process.env.DOOMAIN_PROVIDER || config.defaults?.provider
       const defaultDomain = process.env.DOOMAIN_DOMAIN || config.defaults?.domain
 
-      if (!vercelToken) {
-        vercelToken = (await promptRequired('Vercel token', {password: true})) ?? undefined
+      if (globalVercelTokens.length > 0 || !vercelToken) {
+        vercelToken = (await promptVercelToken(globalVercelTokens, vercelToken)) ?? undefined
         if (!vercelToken) return
       }
 

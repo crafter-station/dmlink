@@ -1,0 +1,71 @@
+import {existsSync} from 'node:fs'
+import {readFile} from 'node:fs/promises'
+import {homedir} from 'node:os'
+import {delimiter, join} from 'node:path'
+
+export type GlobalVercelTokenSource = 'environment' | 'vercel-cli'
+
+export interface GlobalVercelToken {
+  authFile?: string
+  label: string
+  source: GlobalVercelTokenSource
+  token: string
+}
+
+interface VercelCliAuthFile {
+  token?: unknown
+}
+
+function xdgDataHome(env: NodeJS.ProcessEnv): string {
+  if (env.XDG_DATA_HOME) return env.XDG_DATA_HOME
+  if (process.platform === 'darwin') return join(homedir(), 'Library', 'Application Support')
+  if (process.platform === 'win32') return join(env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'xdg.data')
+  return join(homedir(), '.local', 'share')
+}
+
+function xdgDataDirs(appName: string, env: NodeJS.ProcessEnv): string[] {
+  const dirs = [join(xdgDataHome(env), appName)]
+  if (env.XDG_DATA_DIRS) dirs.push(...env.XDG_DATA_DIRS.split(delimiter).map((dir) => join(dir, appName)))
+  return dirs
+}
+
+export function getVercelCliAuthFiles(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [
+    ...xdgDataDirs('com.vercel.cli', env),
+    join(homedir(), '.now'),
+    ...xdgDataDirs('now', env),
+    join(homedir(), '.vercel'),
+  ].map((dir) => join(dir, 'auth.json'))
+}
+
+async function readVercelCliToken(authFile: string): Promise<string | undefined> {
+  try {
+    const data = JSON.parse(await readFile(authFile, 'utf8')) as VercelCliAuthFile
+    return typeof data.token === 'string' && data.token.trim() ? data.token.trim() : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export async function listGlobalVercelTokens(
+  opts: {authFile?: string; authFiles?: string[]; env?: NodeJS.ProcessEnv} = {},
+): Promise<GlobalVercelToken[]> {
+  const env = opts.env ?? process.env
+  const tokens: GlobalVercelToken[] = []
+  const envToken = env.VERCEL_TOKEN?.trim()
+
+  if (envToken) {
+    tokens.push({label: 'VERCEL_TOKEN', source: 'environment', token: envToken})
+  }
+
+  const authFiles = opts.authFile ? [opts.authFile] : (opts.authFiles ?? getVercelCliAuthFiles(env))
+  for (const authFile of authFiles) {
+    if (!existsSync(authFile)) continue
+    const cliToken = await readVercelCliToken(authFile)
+    if (cliToken && !tokens.some((item) => item.token === cliToken)) {
+      tokens.push({authFile, label: 'Vercel CLI', source: 'vercel-cli', token: cliToken})
+    }
+  }
+
+  return tokens
+}
