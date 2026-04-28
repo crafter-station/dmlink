@@ -2,7 +2,8 @@ name: publish
 
 on:
   release:
-    types: [released]
+    types: [published]
+  workflow_dispatch:
 
 jobs:
   publish:
