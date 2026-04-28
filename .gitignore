@@ -5,6 +5,7 @@
 /dist
 /tmp
 /node_modules
+/examples/cs
 *.tsbuildinfo
 oclif.manifest.json
 .claude/settings.local.json
