@@ -4,7 +4,17 @@ import {loadConfig} from '../../lib/config.js'
 import {domainFlag, jsonFlag, providerFlag} from '../../lib/flags.js'
 import {createOutput, outputError} from '../../lib/output.js'
 import {createProvider} from '../../lib/providers/registry.js'
+import type {DnsZone} from '../../lib/providers/types.js'
 import {normalizeDomain} from '../../lib/validate.js'
+
+async function resolveZones(provider: Awaited<ReturnType<typeof createProvider>>, domain?: string): Promise<DnsZone[]> {
+  if (!domain) return provider.listZones()
+
+  const normalized = normalizeDomain(domain)
+  const zone = await provider.getZone(normalized)
+  if (!zone) throw new Error(`${provider.name} does not have a DNS zone for ${normalized}.`)
+  return [zone]
+}
 
 export default class DomainsList extends Command {
   static description = 'List DNS zones and records for a provider.'
@@ -22,7 +32,7 @@ export default class DomainsList extends Command {
     try {
       const config = await loadConfig()
       const provider = await createProvider(flags.provider ?? process.env.DOOMAIN_PROVIDER ?? config.defaults?.provider ?? 'spaceship')
-      const zones = flags.domain ? [{id: normalizeDomain(flags.domain), name: normalizeDomain(flags.domain)}] : await provider.listZones()
+      const zones = await resolveZones(provider, flags.domain)
       const results = []
 
       for (const zone of zones) {

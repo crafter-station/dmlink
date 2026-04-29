@@ -274,7 +274,7 @@ describe('link', () => {
       if (url.hostname === 'api.vercel.com') {
         if (method === 'POST' && url.pathname === '/projects/prj_123/alias') return jsonResponse([{domain: 'app.example.com'}])
         if (method === 'GET' && url.pathname === '/v6/domains/app.example.com/config') {
-          return jsonResponse({recommendedCNAME: [{rank: 1, value: 'cname.vercel-dns.com.'}]})
+          return jsonResponse({misconfigured: false, recommendedCNAME: [{rank: 1, value: 'cname.vercel-dns.com.'}]})
         }
 
         if (method === 'GET' && url.pathname === '/v9/projects/prj_123/domains/app.example.com') {
@@ -327,6 +327,139 @@ describe('link', () => {
     expect(result.vercel.verified).to.equal(true)
     expect(requests).to.include('POST /v9/projects/prj_123/domains/app.example.com/verify')
     expect(dnsBodies).to.deep.include({content: 'vc-domain-verify=app.example.com,token', name: '_vercel.example.com', ttl: 3600, type: 'TXT'})
+  })
+
+  it('does not treat a Vercel verify response without verified true as verified', async () => {
+    process.env.VERCEL_TOKEN = 'vercel_token'
+    process.env.CLOUDFLARE_API_TOKEN = 'cloudflare_token'
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'account_123'
+
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input))
+      const method = init?.method ?? 'GET'
+
+      if (url.hostname === 'api.vercel.com') {
+        if (method === 'POST' && url.pathname === '/projects/prj_123/alias') return jsonResponse([{domain: 'app.example.com'}])
+        if (method === 'GET' && url.pathname === '/v6/domains/app.example.com/config') return jsonResponse({misconfigured: false})
+        if (method === 'GET' && url.pathname === '/v9/projects/prj_123/domains/app.example.com') {
+          return jsonResponse({name: 'app.example.com', verified: false})
+        }
+
+        if (method === 'POST' && url.pathname === '/v9/projects/prj_123/domains/app.example.com/verify') {
+          return jsonResponse({name: 'app.example.com'})
+        }
+      }
+
+      if (url.hostname === 'api.cloudflare.com') {
+        if (method === 'GET' && url.pathname === '/client/v4/zones') return jsonResponse(cloudflareResponse([{id: 'zone_1', name: 'example.com'}]))
+        if (method === 'GET' && url.pathname === '/client/v4/zones/zone_1/dns_records') return jsonResponse(cloudflareResponse([]))
+        if (method === 'POST' && url.pathname === '/client/v4/zones/zone_1/dns_records') {
+          return jsonResponse(cloudflareResponse({...JSON.parse(String(init?.body)), id: 'record_1'}))
+        }
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url.href}`)
+    }) as typeof fetch
+
+    const result = await linkDomain({domain: 'example.com', project: 'prj_123', provider: 'cloudflare', subdomain: 'app', timeoutSeconds: 0})
+
+    expect(result.vercel.verified).to.equal(false)
+  })
+
+  it('fails when Vercel reports verified but domain config remains invalid', async () => {
+    process.env.VERCEL_TOKEN = 'vercel_token'
+    process.env.CLOUDFLARE_API_TOKEN = 'cloudflare_token'
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'account_123'
+
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input))
+      const method = init?.method ?? 'GET'
+
+      if (url.hostname === 'api.vercel.com') {
+        if (method === 'POST' && url.pathname === '/projects/prj_123/alias') return jsonResponse([{domain: 'app.example.com'}])
+        if (method === 'GET' && url.pathname === '/v6/domains/app.example.com/config') {
+          return jsonResponse({conflicts: [{type: 'CNAME'}], misconfigured: true})
+        }
+
+        if (method === 'GET' && url.pathname === '/v9/projects/prj_123/domains/app.example.com') {
+          return jsonResponse({name: 'app.example.com', verified: true})
+        }
+
+        if (method === 'POST' && url.pathname === '/v9/projects/prj_123/domains/app.example.com/verify') {
+          return jsonResponse({name: 'app.example.com', verified: true})
+        }
+      }
+
+      if (url.hostname === 'api.cloudflare.com') {
+        if (method === 'GET' && url.pathname === '/client/v4/zones') return jsonResponse(cloudflareResponse([{id: 'zone_1', name: 'example.com'}]))
+        if (method === 'GET' && url.pathname === '/client/v4/zones/zone_1/dns_records') return jsonResponse(cloudflareResponse([]))
+        if (method === 'POST' && url.pathname === '/client/v4/zones/zone_1/dns_records') {
+          return jsonResponse(cloudflareResponse({...JSON.parse(String(init?.body)), id: 'record_1'}))
+        }
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url.href}`)
+    }) as typeof fetch
+
+    let error: unknown
+    try {
+      await linkDomain({domain: 'example.com', project: 'prj_123', provider: 'cloudflare', subdomain: 'app', timeoutSeconds: 0})
+    } catch (error_) {
+      error = error_
+    }
+
+    expect(error).to.be.instanceOf(DoomainError)
+    expect((error as DoomainError).code).to.equal('DOMAIN_VERIFY_FAILED')
+    expect((error as DoomainError).details).to.deep.equal({domainConfig: {conflicts: [{type: 'CNAME'}], misconfigured: true}})
+  })
+
+  it('applies Vercel ownership TXT records returned from verify errors', async () => {
+    const dnsBodies: Array<Record<string, unknown>> = []
+    process.env.VERCEL_TOKEN = 'vercel_token'
+    process.env.CLOUDFLARE_API_TOKEN = 'cloudflare_token'
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'account_123'
+
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input))
+      const method = init?.method ?? 'GET'
+
+      if (url.hostname === 'api.vercel.com') {
+        if (method === 'POST' && url.pathname === '/projects/prj_123/alias') return jsonResponse([{domain: 'app.example.com'}])
+        if (method === 'GET' && url.pathname === '/v6/domains/app.example.com/config') return jsonResponse({misconfigured: false})
+        if (method === 'GET' && url.pathname === '/v9/projects/prj_123/domains/app.example.com') {
+          return jsonResponse({name: 'app.example.com', verified: false})
+        }
+
+        if (method === 'POST' && url.pathname === '/v9/projects/prj_123/domains/app.example.com/verify') {
+          return jsonErrorResponse(400, {
+            error: {code: 'domain_verification_failed', message: 'Missing ownership verification.'},
+            verification: [{domain: '_vercel.example.com', type: 'TXT', value: 'vc-domain-verify=app.example.com,late-token'}],
+          })
+        }
+      }
+
+      if (url.hostname === 'api.cloudflare.com') {
+        if (method === 'GET' && url.pathname === '/client/v4/zones') return jsonResponse(cloudflareResponse([{id: 'zone_1', name: 'example.com'}]))
+        if (method === 'GET' && url.pathname === '/client/v4/zones/zone_1/dns_records') return jsonResponse(cloudflareResponse([]))
+        if (method === 'POST' && url.pathname === '/client/v4/zones/zone_1/dns_records') {
+          const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+          dnsBodies.push(body)
+          return jsonResponse(cloudflareResponse({...body, id: `record_${dnsBodies.length}`}))
+        }
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url.href}`)
+    }) as typeof fetch
+
+    let error: unknown
+    try {
+      await linkDomain({domain: 'example.com', project: 'prj_123', provider: 'cloudflare', subdomain: 'app', timeoutSeconds: 0})
+    } catch (error_) {
+      error = error_
+    }
+
+    expect(error).to.be.instanceOf(DoomainError)
+    expect(dnsBodies).to.deep.include({content: 'vc-domain-verify=app.example.com,late-token', name: '_vercel.example.com', ttl: 3600, type: 'TXT'})
   })
 
   it('does not treat a Vercel alias conflict as already added unless it is on the target project', async () => {

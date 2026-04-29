@@ -324,6 +324,24 @@ function uniqueRecords(records: DnsRecordInput[]): DnsRecordInput[] {
   return unique
 }
 
+function recordKey(record: DnsRecordInput): string {
+  return `${record.type}:${record.name}:${record.value}:${record.proxied ?? ''}`
+}
+
+function mergeRecords(records: DnsRecordInput[], nextRecords: DnsRecordInput[]): {records: DnsRecordInput[]; added: DnsRecordInput[]} {
+  const existing = new Set(records.map(recordKey))
+  const added = nextRecords.filter((record) => !existing.has(recordKey(record)))
+  return {records: [...records, ...added], added}
+}
+
+function errorDetails(error: unknown): unknown {
+  return error instanceof DoomainError ? error.details : undefined
+}
+
+function isDomainConfigReady(config: Record<string, unknown> | undefined): boolean {
+  return config?.misconfigured !== true
+}
+
 export function verificationRecords(raw: unknown, zoneDomain: string): DnsRecordInput[] {
   const verification = collectVerificationRecords(raw)
 
@@ -377,15 +395,47 @@ async function areRecordsPropagated(records: DnsRecordInput[], zoneDomain: strin
 }
 
 async function waitForVercelDomainReady(
-  opts: {domain: string; input: LinkDomainInput; project: string; records: DnsRecordInput[]; zoneDomain: string},
+  opts: {
+    domain: string
+    force?: boolean
+    input: LinkDomainInput
+    project: string
+    provider: DnsProvider
+    providerId: string
+    records: DnsRecordInput[]
+    zone: DnsZone
+    zoneDomain: string
+  },
 ): Promise<{propagated: boolean; verified: boolean}> {
   const vercel = createVercelClient(await resolveVercelConfig())
   const timeoutSeconds = opts.input.timeoutSeconds ?? 300
   const startedAt = Date.now()
   const deadline = Date.now() + timeoutSeconds * 1000
   let lastError: unknown
+  let lastConfig: Record<string, unknown> | undefined
   let propagated = false
   let attempt = 1
+  let records = opts.records
+
+  async function applyVerificationRecords(raw: unknown): Promise<void> {
+    const nextRecords = planVerificationRecords(opts.providerId, raw, opts.zoneDomain)
+    const merged = mergeRecords(records, nextRecords)
+    if (merged.added.length === 0) return
+
+    reportProgress(opts.input, 'dns:plan', `Found ${merged.added.length} new Vercel ownership record${merged.added.length === 1 ? '' : 's'}`)
+    const dnsPlan = await opts.provider.planChanges(opts.zone, merged.added, {force: opts.force})
+    reportProgress(opts.input, 'dns:apply', `Updating ownership records in ${opts.provider.name}`)
+    await opts.provider.applyChanges(opts.zone, dnsPlan, {force: opts.force})
+    records = merged.records
+  }
+
+  async function isVercelReady(raw: Record<string, unknown>): Promise<boolean> {
+    await applyVerificationRecords(raw)
+    if (raw.verified !== true) return false
+
+    lastConfig = await vercel.getDomainConfig(opts.domain)
+    return isDomainConfigReady(lastConfig)
+  }
 
   while (Date.now() <= deadline) {
     const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
@@ -393,16 +443,17 @@ async function waitForVercelDomainReady(
 
     try {
       const current = await vercel.getProjectDomain(opts.project, opts.domain)
-      if ((current.verified as boolean | undefined) === true) return {propagated: true, verified: true}
+      if (await isVercelReady(current)) return {propagated: true, verified: true}
 
       const result = await vercel.verifyProjectDomain(opts.project, opts.domain)
-      if ((result.verified as boolean | undefined) !== false) return {propagated: true, verified: true}
+      if (await isVercelReady(result)) return {propagated: true, verified: true}
     } catch (error) {
       // Vercel returns an error while DNS is still propagating.
       lastError = error
+      await applyVerificationRecords(errorDetails(error))
     }
 
-    propagated = await areRecordsPropagated(opts.records, opts.zoneDomain)
+    propagated = await areRecordsPropagated(records, opts.zoneDomain)
     reportProgress(
       opts.input,
       'dns:wait',
@@ -411,6 +462,7 @@ async function waitForVercelDomainReady(
         : 'DNS records were saved; public DNS is still catching up',
     )
     attempt += 1
+    if (Date.now() > deadline) break
     await wait(5000)
   }
 
@@ -418,6 +470,15 @@ async function waitForVercelDomainReady(
     throw new DoomainError(
       'DOMAIN_VERIFY_FAILED',
       `Vercel did not verify ${opts.domain} within ${timeoutSeconds} seconds. Last Vercel response: ${errorMessage(lastError)}`,
+      {domainConfig: lastConfig, error: errorDetails(lastError)},
+    )
+  }
+
+  if (lastConfig?.misconfigured === true) {
+    throw new DoomainError(
+      'DOMAIN_VERIFY_FAILED',
+      `Vercel verified ${opts.domain}, but its DNS configuration is still invalid after ${timeoutSeconds} seconds.`,
+      {domainConfig: lastConfig},
     )
   }
 
@@ -491,7 +552,17 @@ export async function linkDomain(input: LinkDomainInput): Promise<LinkDomainResu
   }
 
   const waitResult = shouldWait
-    ? await waitForVercelDomainReady({domain: plan.domain, input, project: plan.project, records, zoneDomain: plan.zoneDomain})
+    ? await waitForVercelDomainReady({
+        domain: plan.domain,
+        force: input.force,
+        input,
+        project: plan.project,
+        provider,
+        providerId: plan.provider,
+        records,
+        zone,
+        zoneDomain: plan.zoneDomain,
+      })
     : {propagated: false, verified: false}
 
   return {
