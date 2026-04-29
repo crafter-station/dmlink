@@ -87,6 +87,15 @@ function apiErrorMessage(status: number, body?: VercelApiErrorBody): string {
   return body?.error?.message ?? `Vercel API error (${status}).`
 }
 
+function vercelAuthErrorMessage(body?: VercelApiErrorBody): string {
+  const message = body?.error?.message
+  if (!message || message.toLowerCase() === 'not authorized') {
+    return 'Vercel token is not authorized. Run `vercel login` again or enter a token from https://vercel.com/account/tokens.'
+  }
+
+  return `Vercel authorization failed: ${message}`
+}
+
 function isDomainConflictError(error: unknown): boolean {
   if (!(error instanceof DoomainError)) return false
   const details = error.details as VercelApiErrorBody | undefined
@@ -122,6 +131,10 @@ export function createVercelClient(config: VercelConfig) {
 
     if (!response.ok) {
       const body = (await response.json().catch(() => undefined)) as VercelApiErrorBody | undefined
+      if (response.status === 401 || response.status === 403) {
+        throw new DoomainError('VERCEL_AUTH_FAILED', vercelAuthErrorMessage(body), body)
+      }
+
       throw new DoomainError('DOMAIN_LINK_FAILED', apiErrorMessage(response.status, body), body)
     }
 

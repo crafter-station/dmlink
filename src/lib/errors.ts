@@ -16,6 +16,7 @@ export type DoomainErrorCode =
   | 'PROVIDER_ZONE_AMBIGUOUS'
   | 'PROVIDER_ZONE_NOT_FOUND'
   | 'PROJECT_NOT_FOUND'
+  | 'VERCEL_AUTH_FAILED'
   | 'VERCEL_PROJECT_NOT_LINKED'
 
 export class DoomainError extends Error {

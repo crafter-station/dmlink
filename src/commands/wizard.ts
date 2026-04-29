@@ -133,6 +133,10 @@ function globalTokenLabel(token: GlobalVercelToken): string {
   return token.source === 'environment' ? `Use ${token.label}` : `Use ${token.label} token`
 }
 
+function isVercelAuthError(error: unknown): boolean {
+  return error instanceof DoomainError && error.code === 'VERCEL_AUTH_FAILED'
+}
+
 async function promptVercelToken(globalTokens: GlobalVercelToken[]): Promise<string | null> {
   if (globalTokens.length > 0) {
     const selected = await p.select({
@@ -188,36 +192,51 @@ export default class Wizard extends Command {
       let vercelTeamId = process.env.VERCEL_TEAM_ID || localProject?.orgId || config.vercel?.teamId
       const defaultProvider = process.env.DOOMAIN_PROVIDER || config.defaults?.provider
       const defaultDomain = process.env.DOOMAIN_DOMAIN || config.defaults?.domain
+      let globalVercelTokens: GlobalVercelToken[] = []
 
       if (!vercelToken) {
-        const globalVercelTokens = await listGlobalVercelTokens()
+        globalVercelTokens = await listGlobalVercelTokens()
         vercelToken = (await promptVercelToken(globalVercelTokens)) ?? undefined
         if (!vercelToken) return
       }
 
-      const teamSpinner = p.spinner()
       let teams: VercelTeam[] = []
 
-      if (process.env.VERCEL_TEAM_ID) {
-        p.log.info(`Using Vercel team ${vercelTeamId} from VERCEL_TEAM_ID.`)
-      } else {
-        activeSpinner = teamSpinner
-        teamSpinner.start('Loading Vercel teams')
-        teams = await createVercelClient({token: vercelToken}).listTeams()
-        teamSpinner.stop(`Loaded ${teams.length} Vercel team${teams.length === 1 ? '' : 's'}`)
-        activeSpinner = undefined
+      while (true) {
+        const teamSpinner = p.spinner()
+        try {
+          if (process.env.VERCEL_TEAM_ID) {
+            p.log.info(`Using Vercel team ${vercelTeamId} from VERCEL_TEAM_ID.`)
+          } else {
+            activeSpinner = teamSpinner
+            teamSpinner.start('Loading Vercel teams')
+            teams = await createVercelClient({token: vercelToken}).listTeams()
+            teamSpinner.stop(`Loaded ${teams.length} Vercel team${teams.length === 1 ? '' : 's'}`)
+            activeSpinner = undefined
 
-        const selected = await p.select({
-          message: 'Select Vercel account/team',
-          initialValue: vercelTeamId ?? localProject?.orgId ?? PERSONAL_ACCOUNT,
-          options: [
-            {label: 'Personal account', value: PERSONAL_ACCOUNT, hint: 'No team id'},
-            ...teams.map((team) => ({label: teamLabel(team), value: team.id, hint: team.role ?? team.slug})),
-          ],
-        })
-        const resolved = cancelIfNeeded(selected)
-        if (resolved === null) return
-        vercelTeamId = resolved === PERSONAL_ACCOUNT ? undefined : resolved
+            const selected = await p.select({
+              message: 'Select Vercel account/team',
+              initialValue: vercelTeamId ?? localProject?.orgId ?? PERSONAL_ACCOUNT,
+              options: [
+                {label: 'Personal account', value: PERSONAL_ACCOUNT, hint: 'No team id'},
+                ...teams.map((team) => ({label: teamLabel(team), value: team.id, hint: team.role ?? team.slug})),
+              ],
+            })
+            const resolved = cancelIfNeeded(selected)
+            if (resolved === null) return
+            vercelTeamId = resolved === PERSONAL_ACCOUNT ? undefined : resolved
+          }
+          break
+        } catch (error) {
+          if (!isVercelAuthError(error) || process.env.VERCEL_TOKEN) throw error
+          activeSpinner?.error('Vercel authorization failed')
+          activeSpinner = undefined
+          p.log.warning(error instanceof Error ? error.message : String(error))
+          if (globalVercelTokens.length === 0) globalVercelTokens = await listGlobalVercelTokens()
+          globalVercelTokens = globalVercelTokens.filter((token) => token.token !== vercelToken)
+          vercelToken = (await promptVercelToken(globalVercelTokens)) ?? undefined
+          if (!vercelToken) return
+        }
       }
 
       const selectedTeam = teams.find((team) => team.id === vercelTeamId)

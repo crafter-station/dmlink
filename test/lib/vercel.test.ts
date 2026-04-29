@@ -4,10 +4,15 @@ import {join} from 'node:path'
 
 import {expect} from 'chai'
 
+import {DoomainError} from '../../src/lib/errors.js'
 import {createVercelClient, resolveVercelConfig} from '../../src/lib/vercel.js'
 
 function jsonResponse(body: unknown): Response {
   return {json: async () => body, ok: true, status: 200} as Response
+}
+
+function errorResponse(status: number, body: unknown): Response {
+  return {json: async () => body, ok: false, status} as Response
 }
 
 describe('vercel client', () => {
@@ -66,6 +71,19 @@ describe('vercel client', () => {
       expect(config.teamId).to.equal(undefined)
     } finally {
       rmSync(dir, {force: true, recursive: true})
+    }
+  })
+
+  it('reports unauthorized Vercel tokens with an actionable error', async () => {
+    globalThis.fetch = (async () => errorResponse(401, {error: {message: 'Not authorized'}})) as typeof fetch
+
+    try {
+      await createVercelClient({token: 'bad_token'}).listTeams()
+      throw new Error('Expected listTeams to fail')
+    } catch (error) {
+      expect(error).to.be.instanceOf(DoomainError)
+      expect((error as DoomainError).code).to.equal('VERCEL_AUTH_FAILED')
+      expect((error as Error).message).to.include('Run `vercel login` again')
     }
   })
 })
