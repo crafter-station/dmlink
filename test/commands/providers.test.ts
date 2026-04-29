@@ -21,6 +21,7 @@ describe('providers', () => {
     delete process.env.NAMECHEAP_CLIENT_IP
     delete process.env.CLOUDFLARE_API_TOKEN
     delete process.env.CLOUDFLARE_ACCOUNT_ID
+    delete process.env.HOSTINGER_API_TOKEN
   })
 
   afterEach(() => {
@@ -40,6 +41,7 @@ describe('providers', () => {
       {configured: false, id: 'spaceship'},
       {configured: false, id: 'namecheap'},
       {configured: false, id: 'cloudflare'},
+      {configured: false, id: 'hostinger'},
     ])
   })
 

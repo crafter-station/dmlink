@@ -69,6 +69,7 @@ export const commandSchemas: CommandSchema[] = [
       'doomain providers connect spaceship --credential apiKey=key --credential apiSecret=secret --json',
       'doomain providers connect namecheap --credential apiUser=user --credential apiKey=key --credential clientIp=127.0.0.1 --json',
       'doomain providers connect cloudflare --credential apiToken=token --credential accountId=account_id --json',
+      'doomain providers connect hostinger --credential apiToken=token --json',
     ],
     flags: [
       {name: 'json', type: 'boolean', description: 'Output a single JSON object and never prompt.'},
@@ -100,7 +101,7 @@ export const commandSchemas: CommandSchema[] = [
   {
     name: 'providers disconnect',
     description: 'Remove saved DNS provider credentials locally.',
-    examples: ['doomain providers disconnect namecheap --json', 'doomain providers disconnect cloudflare --json'],
+    examples: ['doomain providers disconnect namecheap --json', 'doomain providers disconnect cloudflare --json', 'doomain providers disconnect hostinger --json'],
     flags: [
       {name: 'json', type: 'boolean', description: 'Output a single JSON object and never prompt.'},
     ],
@@ -108,7 +109,7 @@ export const commandSchemas: CommandSchema[] = [
   {
     name: 'providers verify',
     description: 'Verify saved DNS provider credentials.',
-    examples: ['doomain providers verify spaceship --json', 'doomain providers verify namecheap --json'],
+    examples: ['doomain providers verify spaceship --json', 'doomain providers verify namecheap --json', 'doomain providers verify hostinger --json'],
     flags: [
       {name: 'json', type: 'boolean', description: 'Output a single JSON object and never prompt.'},
     ],

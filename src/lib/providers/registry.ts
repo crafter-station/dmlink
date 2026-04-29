@@ -2,11 +2,12 @@ import {DoomainError} from '../errors.js'
 import {ensureProviderId} from '../validate.js'
 import {cloudflareProviderDefinition} from './cloudflare/index.js'
 import {createProviderContext} from './core/config.js'
+import {hostingerProviderDefinition} from './hostinger/index.js'
 import {namecheapProviderDefinition} from './namecheap/index.js'
 import {spaceshipProviderDefinition} from './spaceship/index.js'
 import type {DnsProvider, DnsProviderDefinition} from './types.js'
 
-const definitions = [spaceshipProviderDefinition, namecheapProviderDefinition, cloudflareProviderDefinition]
+const definitions = [spaceshipProviderDefinition, namecheapProviderDefinition, cloudflareProviderDefinition, hostingerProviderDefinition]
 
 export function listProviderDefinitions(): DnsProviderDefinition[] {
   return definitions

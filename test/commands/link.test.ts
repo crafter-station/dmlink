@@ -52,6 +52,7 @@ describe('link', () => {
       'CLOUDFLARE_API_TOKEN',
       'DOOMAIN_DOMAIN',
       'DOOMAIN_PROVIDER',
+      'HOSTINGER_API_TOKEN',
       'NAMECHEAP_API_KEY',
       'NAMECHEAP_API_USER',
       'NAMECHEAP_CLIENT_IP',

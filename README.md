@@ -14,7 +14,7 @@ Use the interactive wizard when working by hand. Use explicit commands with `--j
 - DNS provider inference by longest matching configured zone.
 - Dry-run plans before writing changes.
 - DNS propagation and Vercel verification wait loop.
-- DNS provider support for Spaceship, Namecheap, and Cloudflare.
+- DNS provider support for Spaceship, Namecheap, Cloudflare, and Hostinger.
 
 ## Install
 
@@ -93,6 +93,7 @@ Doomain stores local credentials in `~/.doomain/config.json` with `0600` file pe
 | Spaceship | `spaceship` | `apiKey`, `apiSecret` | `SPACESHIP_API_KEY`, `SPACESHIP_API_SECRET` | API key needs domain read access and DNS record read/write access. |
 | Namecheap | `namecheap` | `apiUser`, `apiKey`, `clientIp` | `NAMECHEAP_API_USER`, `NAMECHEAP_API_KEY`, `NAMECHEAP_CLIENT_IP` | API access must be enabled and `clientIp` must be your whitelisted public IPv4. Optional: `username`, `sandbox`. |
 | Cloudflare | `cloudflare` | `apiToken`, `accountId` | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | API token needs `Zone:Read` and `DNS:Edit`. Vercel records are written as DNS-only records, not proxied. |
+| Hostinger | `hostinger` | `apiToken` | `HOSTINGER_API_TOKEN` | API token needs access to domain portfolio and DNS zone records. |
 
 ### Spaceship
 
@@ -138,6 +139,15 @@ doomain providers connect cloudflare \
 ```
 
 Cloudflare records created for Vercel `A`, `AAAA`, and `CNAME` targets are set to `proxied: false` so Vercel can validate the domain.
+
+### Hostinger
+
+```bash
+doomain providers connect hostinger \
+  --credential apiToken=your_hostinger_api_token
+```
+
+Create Hostinger API tokens from hPanel Account > API. Doomain lists active zones from the Hostinger domain portfolio and updates records through the DNS zone API.
 
 ## Linking Domains
 
@@ -373,6 +383,7 @@ Saves DNS provider credentials locally.
 ```bash
 doomain providers connect cloudflare -c apiToken=token -c accountId=account_id
 doomain providers connect namecheap -c apiUser=user -c apiKey=key -c clientIp=127.0.0.1 --json
+doomain providers connect hostinger -c apiToken=token --json
 doomain providers connect spaceship --api-key key --api-secret secret
 ```
 
@@ -495,6 +506,12 @@ CLOUDFLARE_API_TOKEN
 CLOUDFLARE_ACCOUNT_ID
 ```
 
+Hostinger:
+
+```bash
+HOSTINGER_API_TOKEN
+```
+
 Doomain defaults and config:
 
 ```bash
@@ -528,7 +545,7 @@ The selected provider does not have a DNS zone matching the target domain. Check
 
 `PROVIDER_ZONE_AMBIGUOUS`
 
-More than one configured provider has the same best matching zone. Re-run with `--provider cloudflare`, `--provider namecheap`, or `--provider spaceship`.
+More than one configured provider has the same best matching zone. Re-run with `--provider cloudflare`, `--provider namecheap`, `--provider spaceship`, or `--provider hostinger`.
 
 Namecheap authentication or permission errors
 
@@ -537,6 +554,14 @@ Make sure Namecheap API access is enabled and your current public IPv4 is whitel
 Cloudflare permission errors
 
 Make sure the API token has `Zone:Read` and `DNS:Edit` permissions for the account that owns the zones.
+
+Hostinger authentication errors
+
+Make sure the API token is active and can access the domains you want Doomain to manage.
+
+Hostinger DNS zone not found
+
+Make sure the domain is active in Hostinger before linking it. Domains shown as `pending_setup` in Hostinger's portfolio API are not writable through the DNS zone API yet.
 
 DNS propagation timeout
 
