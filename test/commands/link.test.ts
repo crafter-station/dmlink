@@ -73,13 +73,13 @@ describe('link', () => {
     rmSync(dir, {force: true, recursive: true})
   })
 
-  it('requires an explicit domain for the link command', async () => {
+  it('requires a domain when no command, environment, or config default exists', async () => {
     const {stdout} = await runCommand('link --json')
     const result = JSON.parse(stdout) as {error: {code: string; message: string}; ok: boolean}
 
     expect(result.ok).to.equal(false)
     expect(result.error.code).to.equal('MISSING_ARGUMENT')
-    expect(result.error.message).to.include('doomain link <domain>')
+    expect(result.error.message).to.include('set a default domain')
   })
 
   it('prints a dry-run JSON plan for an explicit provider', async () => {
@@ -116,6 +116,50 @@ describe('link', () => {
     expect(result.data.providerInferred).to.equal(false)
     expect(result.data.recordName).to.equal('app')
     expect(result.data.records).to.deep.equal([{type: 'CNAME', name: 'app', value: 'cname.vercel-dns.com', ttl: 3600}])
+  })
+
+  it('uses DOOMAIN_DOMAIN when the link command omits an explicit domain', async () => {
+    process.env.DOOMAIN_DOMAIN = 'app.example.com'
+    process.env.CLOUDFLARE_API_TOKEN = 'cloudflare_token'
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'account_123'
+    globalThis.fetch = (async (input) => {
+      const url = new URL(String(input))
+      if (url.hostname === 'api.cloudflare.com' && url.pathname === '/client/v4/zones') {
+        return jsonResponse(cloudflareResponse([{id: 'zone_1', name: 'example.com'}]))
+      }
+
+      throw new Error(`Unexpected request: ${url.href}`)
+    }) as typeof fetch
+
+    const {stdout} = await runCommand('link --project prj_123 --dry-run --json')
+    const result = JSON.parse(stdout) as {ok: boolean; data: {domain: string; provider: string; recordName: string}}
+
+    expect(result.ok).to.equal(true)
+    expect(result.data.domain).to.equal('app.example.com')
+    expect(result.data.provider).to.equal('cloudflare')
+    expect(result.data.recordName).to.equal('app')
+  })
+
+  it('uses the configured default domain when the link command omits an explicit domain', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'cloudflare_token'
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'account_123'
+    await saveConfig({defaults: {domain: 'app.example.com'}})
+    globalThis.fetch = (async (input) => {
+      const url = new URL(String(input))
+      if (url.hostname === 'api.cloudflare.com' && url.pathname === '/client/v4/zones') {
+        return jsonResponse(cloudflareResponse([{id: 'zone_1', name: 'example.com'}]))
+      }
+
+      throw new Error(`Unexpected request: ${url.href}`)
+    }) as typeof fetch
+
+    const {stdout} = await runCommand('link --project prj_123 --dry-run --json')
+    const result = JSON.parse(stdout) as {ok: boolean; data: {domain: string; provider: string; recordName: string}}
+
+    expect(result.ok).to.equal(true)
+    expect(result.data.domain).to.equal('app.example.com')
+    expect(result.data.provider).to.equal('cloudflare')
+    expect(result.data.recordName).to.equal('app')
   })
 
   it('accepts the target domain as a positional argument', async () => {

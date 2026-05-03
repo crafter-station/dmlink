@@ -1,9 +1,8 @@
 import {Args, Command, Flags} from '@oclif/core'
 import * as p from '@clack/prompts'
 
-import {DoomainError} from '../lib/errors.js'
 import {accountFlag, apexFlag, domainFlag, jsonFlag, projectFlag, providerFlag, subdomainFlag} from '../lib/flags.js'
-import {linkDomain, type DnsOverrideWarning} from '../lib/link-domain.js'
+import {linkDomain, type DnsOverrideWarning, type LinkDomainResult} from '../lib/link-domain.js'
 import {createOutput, outputError} from '../lib/output.js'
 
 function recordName(name: string): string {
@@ -30,6 +29,20 @@ function dnsOverrideNote(warning: DnsOverrideWarning): string {
     '',
     'Desired:',
     ...warning.desired.map((record) => `- ${recordLine(record)}`),
+  ].join('\n')
+}
+
+function providerAccount(result: LinkDomainResult): string {
+  return result.isDefaultAccount ? result.provider : `${result.provider}/${result.account}`
+}
+
+function dryRunPreview(result: LinkDomainResult): string {
+  const account = providerAccount(result)
+  return [
+    `Vercel: add ${result.domain} to ${result.project}`,
+    `DNS provider: ${account} (${result.zoneDomain})`,
+    ...result.records.map((record) => `DNS: ${recordLine(record)} in ${account}`),
+    `Actions: ${result.actions.join(', ')}`,
   ].join('\n')
 }
 
@@ -70,14 +83,13 @@ export default class Link extends Command {
     const domain = flags.domain ?? args.domain
 
     try {
-      if (!domain) {
-        throw new DoomainError('MISSING_ARGUMENT', 'Domain is required. Use `doomain link <domain>` or pass --domain.')
-      }
-
       if (flags['dry-run']) {
         const result = await linkDomain({...flags, domain, dryRun: true, timeoutSeconds: flags.timeout})
         out.result(result)
-        if (!out.json) out.success(`Dry run ready for ${result.domain}.`)
+        if (!out.json) {
+          p.note(dryRunPreview(result), 'Dry run')
+          out.success(`Dry run ready for ${result.domain}.`)
+        }
         return
       }
 

@@ -727,8 +727,9 @@ async function resolveDnsForce(input: LinkDomainInput, opts: {baseRecord: DnsRec
 }
 
 export async function createLinkPlan(input: LinkDomainInput): Promise<LinkDomainPlan> {
+  const domain = await resolveConfiguredDomain(input.domain)
   const project = await resolveProject(input.project)
-  const resolved = await resolveProviderTarget(input)
+  const resolved = await resolveProviderTarget({...input, domain})
   const {account, accountInferred, isDefaultAccount, provider, providerInferred, target} = resolved
   const record = planBaseRecord({isApex: target.isApex, provider, recordName: target.recordName})
 

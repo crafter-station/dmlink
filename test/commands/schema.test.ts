@@ -51,8 +51,27 @@ describe('schema', () => {
       id: 'cloudflare',
       isDefaultAccount: true,
     })
+    expect(result.data.examples).to.include('doomain link --project my-app --json')
     expect(result.data.examples).to.include('doomain link app.example.com --provider spaceship --account work --project my-app --json')
     expect(result.data.flags.find((flag) => flag.name === 'account')?.description).to.include('profile/account alias')
+    expect(result.data.flags.find((flag) => flag.name === 'domain')?.description).to.include('DOOMAIN_DOMAIN')
     expect(result.data.flags.find((flag) => flag.name === 'dry-run')?.description).to.include('agents should not use this')
+    expect(result.data.flags.find((flag) => flag.name === 'force')?.description).to.include('Move existing Vercel project domains')
+    expect(result.data.flags.find((flag) => flag.name === 'force')?.description).to.include('conflicting DNS records')
+    expect(result.data.flags.find((flag) => flag.name === 'wait')?.description).to.include('--no-wait')
+  })
+
+  it('documents JSON-capable public commands for agents', async () => {
+    const {stdout} = await runCommand('schema --json')
+    const result = JSON.parse(stdout) as {data: Array<{name: string}>; ok: boolean}
+
+    expect(result.ok).to.equal(true)
+    expect(result.data.map((schema) => schema.name)).to.include.members([
+      'schema',
+      'providers list',
+      'domains list',
+      'projects list',
+      'verify',
+    ])
   })
 })
