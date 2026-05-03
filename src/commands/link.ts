@@ -1,7 +1,7 @@
 import {Args, Command, Flags} from '@oclif/core'
 
 import {DoomainError} from '../lib/errors.js'
-import {apexFlag, domainFlag, jsonFlag, projectFlag, providerFlag, subdomainFlag} from '../lib/flags.js'
+import {accountFlag, apexFlag, domainFlag, jsonFlag, projectFlag, providerFlag, subdomainFlag} from '../lib/flags.js'
 import {linkDomain} from '../lib/link-domain.js'
 import {createOutput, outputError} from '../lib/output.js'
 
@@ -14,6 +14,7 @@ export default class Link extends Command {
     '<%= config.bin %> <%= command.id %> --domain app.example.com --project my-app --json',
     '<%= config.bin %> <%= command.id %> --domain example.com --subdomain app --project my-app',
     '<%= config.bin %> <%= command.id %> --provider spaceship --domain example.com --apex --project my-app --json',
+    '<%= config.bin %> <%= command.id %> app.example.com --provider spaceship --account work --project my-app --json',
   ]
 
   static args = {
@@ -21,6 +22,7 @@ export default class Link extends Command {
   }
 
   static flags = {
+    account: accountFlag,
     apex: apexFlag,
     domain: domainFlag,
     'dry-run': Flags.boolean({description: 'Preview changes without writing to Vercel or DNS.'}),

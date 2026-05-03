@@ -1,9 +1,16 @@
 import {Command} from '@oclif/core'
 
 import {loadConfig} from '../../lib/config.js'
-import {domainFlag, jsonFlag, providerFlag} from '../../lib/flags.js'
+import {accountFlag, domainFlag, jsonFlag, providerFlag} from '../../lib/flags.js'
 import {createOutput, outputError} from '../../lib/output.js'
-import {createProvider} from '../../lib/providers/registry.js'
+import {
+  DEFAULT_PROVIDER_ACCOUNT,
+  isDefaultProviderAccount,
+  listConfiguredProviderAccounts,
+  normalizeProviderAccount,
+  type ProviderAccountRef,
+} from '../../lib/providers/core/config.js'
+import {createProvider, getProviderDefinition} from '../../lib/providers/registry.js'
 import type {DnsZone} from '../../lib/providers/types.js'
 import {normalizeDomain} from '../../lib/validate.js'
 
@@ -20,6 +27,7 @@ export default class DomainsList extends Command {
   static description = 'List DNS zones and records for a provider.'
 
   static flags = {
+    account: accountFlag,
     domain: domainFlag,
     json: jsonFlag,
     provider: providerFlag,
@@ -31,18 +39,39 @@ export default class DomainsList extends Command {
 
     try {
       const config = await loadConfig()
-      const provider = await createProvider(flags.provider ?? process.env.DOOMAIN_PROVIDER ?? config.defaults?.provider ?? 'spaceship')
-      const zones = await resolveZones(provider, flags.domain)
+      const providerId = flags.provider ?? process.env.DOOMAIN_PROVIDER ?? config.defaults?.provider ?? 'spaceship'
+      const definition = getProviderDefinition(providerId)
+      const account = flags.account ? normalizeProviderAccount(flags.account) : undefined
+      const accounts: ProviderAccountRef[] = account
+        ? [{account, isDefaultAccount: isDefaultProviderAccount(account), providerId: definition.id}]
+        : listConfiguredProviderAccounts(config, definition)
+      const selectedAccounts = accounts.length > 0 ? accounts : [{account: DEFAULT_PROVIDER_ACCOUNT, isDefaultAccount: true, providerId: definition.id}]
       const results = []
 
-      for (const zone of zones) {
-        const records = await provider.listRecords(zone)
-        results.push({zone, records})
-        out.info(`${zone.name} (${records.length} records)`)
-        for (const record of records) out.info(`  ${record.type} ${record.name} -> ${record.value}`)
+      for (const selectedAccount of selectedAccounts) {
+        const provider = await createProvider(definition.id, {account: selectedAccount.account})
+        const zones = await resolveZones(provider, flags.domain)
+
+        for (const zone of zones) {
+          const records = await provider.listRecords(zone)
+          results.push({
+            account: selectedAccount.account,
+            isDefaultAccount: selectedAccount.isDefaultAccount,
+            provider: provider.id,
+            records,
+            zone,
+          })
+          const accountLabel = selectedAccount.isDefaultAccount ? provider.id : `${provider.id}/${selectedAccount.account}`
+          out.info(`${zone.name} (${records.length} records) via ${accountLabel}`)
+          for (const record of records) out.info(`  ${record.type} ${record.name} -> ${record.value}`)
+        }
       }
 
-      out.result({provider: provider.id, zones: results})
+      out.result({
+        ...(selectedAccounts.length === 1 ? {account: selectedAccounts[0].account, isDefaultAccount: selectedAccounts[0].isDefaultAccount} : {}),
+        provider: definition.id,
+        zones: results,
+      })
     } catch (error) {
       outputError(out.json, error, 'DOMAIN_LINK_FAILED')
       this.exit(1)

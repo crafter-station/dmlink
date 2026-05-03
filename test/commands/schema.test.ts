@@ -28,7 +28,8 @@ describe('schema', () => {
         agentHint: string
         agentInstructions: string[]
         agentQuickstart: {doNotPreflight: boolean; preferredFirstCommand: string}
-        configuredProviders: Array<{configured: boolean; id: string}>
+        configuredProviders: Array<{account: string; configured: boolean; id: string; isDefaultAccount: boolean}>
+        examples: string[]
         flags: Array<{description: string; name: string}>
       }
       ok: boolean
@@ -42,12 +43,16 @@ describe('schema', () => {
       preferredFirstCommand: 'doomain link <domain> --json',
     })
     expect(result.data.configuredProviders).to.deep.include({
+      account: 'default',
       configured: true,
       default: false,
       displayName: 'Cloudflare',
       docsUrl: 'https://developers.cloudflare.com/api/',
       id: 'cloudflare',
+      isDefaultAccount: true,
     })
+    expect(result.data.examples).to.include('doomain link app.example.com --provider spaceship --account work --project my-app --json')
+    expect(result.data.flags.find((flag) => flag.name === 'account')?.description).to.include('provider account alias')
     expect(result.data.flags.find((flag) => flag.name === 'dry-run')?.description).to.include('agents should not use this')
   })
 })

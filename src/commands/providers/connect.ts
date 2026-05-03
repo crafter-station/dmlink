@@ -2,10 +2,10 @@ import {Args, Command, Flags} from '@oclif/core'
 import * as p from '@clack/prompts'
 
 import {getConfigPath, loadConfig, maskSecret, updateConfig} from '../../lib/config.js'
-import {jsonFlag} from '../../lib/flags.js'
+import {accountFlag, jsonFlag} from '../../lib/flags.js'
 import {createOutput, outputError} from '../../lib/output.js'
+import {isDefaultProviderAccount, listConfiguredProviderAccounts, normalizeProviderAccount} from '../../lib/providers/core/config.js'
 import {getProviderDefinition, listProviderDefinitions} from '../../lib/providers/registry.js'
-import {isProviderConfigured} from '../../lib/providers/status.js'
 import type {CredentialDefinition, DnsProviderDefinition} from '../../lib/providers/types.js'
 
 function requireString(value: unknown, message: string): string {
@@ -69,7 +69,7 @@ async function promptProvider(): Promise<DnsProviderDefinition | null> {
   const selected = await p.select({
     message: 'Choose DNS provider',
     options: listProviderDefinitions().map((definition) => ({
-      hint: isProviderConfigured(definition, config) ? 'Connected' : 'Not connected',
+      hint: listConfiguredProviderAccounts(config, definition).length > 0 ? 'Connected' : 'Not connected',
       label: definition.displayName,
       value: definition.id,
     })),
@@ -102,6 +102,7 @@ export default class ProvidersConnect extends Command {
   static description = 'Save DNS provider credentials locally.'
 
   static flags = {
+    account: accountFlag,
     'api-key': Flags.string({description: 'Compatibility alias for Spaceship apiKey.'}),
     'api-secret': Flags.string({description: 'Compatibility alias for Spaceship apiSecret.'}),
     credential: Flags.string({char: 'c', description: 'Provider credential as key=value.', multiple: true}),
@@ -118,6 +119,8 @@ export default class ProvidersConnect extends Command {
       if (!args.provider && out.json) throw new Error('Missing provider. Pass a provider id, for example `namecheap`.')
       const definition = args.provider ? getProviderDefinition(args.provider) : await promptProvider()
       if (!definition) return
+      const account = normalizeProviderAccount(flags.account)
+      const isDefaultAccount = isDefaultProviderAccount(account)
       const passedCredentials = parseCredentialFlags(flags.credential)
       const credentials: Record<string, string> = {}
       const detectedPublicIp = !out.json && usesClientIp(definition) ? await fetchPublicIp() : undefined
@@ -185,14 +188,25 @@ export default class ProvidersConnect extends Command {
         defaults: setDefault ? {...config.defaults, provider: definition.id} : config.defaults,
         providers: {
           ...config.providers,
-          [definition.id]: {credentials},
+          [definition.id]: isDefaultAccount
+            ? {...config.providers?.[definition.id], credentials}
+            : {
+                ...config.providers?.[definition.id],
+                accounts: {
+                  ...config.providers?.[definition.id]?.accounts,
+                  [account]: {credentials},
+                },
+              },
         },
       }))
 
       out.result({
+        account,
         configPath: getConfigPath(),
         credentials: Object.fromEntries(Object.entries(credentials).map(([key, value]) => [key, maskSecret(value)])),
+        defaultAccount: isDefaultAccount,
         domainCount,
+        isDefaultAccount,
         provider: definition.id,
         verified: !flags['no-verify'],
       })

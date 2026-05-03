@@ -28,7 +28,10 @@ export default class ProvidersStatus extends Command {
     const providers = await listProviderStatuses({verify: !flags['no-verify']})
     spinner?.stop('Checked DNS providers')
 
-    for (const provider of providers) out.info(`${provider.displayName} (${provider.id}) - ${formatStatus(provider)}${provider.default ? ' [default]' : ''}`)
+    for (const provider of providers) {
+      const account = provider.isDefaultAccount ? provider.id : `${provider.id}/${provider.account}`
+      out.info(`${provider.displayName} (${account}) - ${formatStatus(provider)}${provider.default ? ' [default]' : ''}`)
+    }
 
     out.result({providers})
   }

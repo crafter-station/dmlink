@@ -1,8 +1,9 @@
 import {Args, Command} from '@oclif/core'
 
 import {getConfigPath, updateConfig} from '../../lib/config.js'
-import {jsonFlag} from '../../lib/flags.js'
+import {accountFlag, jsonFlag} from '../../lib/flags.js'
 import {createOutput, outputError} from '../../lib/output.js'
+import {isDefaultProviderAccount, normalizeProviderAccount} from '../../lib/providers/core/config.js'
 import {getProviderDefinition} from '../../lib/providers/registry.js'
 
 function envOverrides(definition: ReturnType<typeof getProviderDefinition>): string[] {
@@ -24,6 +25,7 @@ export default class ProvidersDisconnect extends Command {
   ]
 
   static flags = {
+    account: accountFlag,
     json: jsonFlag,
   }
 
@@ -33,15 +35,42 @@ export default class ProvidersDisconnect extends Command {
 
     try {
       const definition = getProviderDefinition(args.provider)
+      const account = flags.account ? normalizeProviderAccount(flags.account) : undefined
       let removed = false
 
       await updateConfig((config) => {
         const providers = {...config.providers}
-        removed = providers[definition.id] !== undefined
-        delete providers[definition.id]
+        const provider = providers[definition.id]
+
+        if (!account) {
+          removed = provider !== undefined
+          delete providers[definition.id]
+        } else if (provider) {
+          const nextProvider = {...provider}
+          if (isDefaultProviderAccount(account)) {
+            removed = nextProvider.credentials !== undefined || (definition.id === 'spaceship' && ('apiKey' in nextProvider || 'apiSecret' in nextProvider))
+            delete nextProvider.credentials
+            if (definition.id === 'spaceship') {
+              delete (nextProvider as Record<string, unknown>).apiKey
+              delete (nextProvider as Record<string, unknown>).apiSecret
+              delete (nextProvider as Record<string, unknown>).domains
+            }
+          } else {
+            const accounts = {...nextProvider.accounts}
+            removed = accounts[account] !== undefined
+            delete accounts[account]
+            nextProvider.accounts = Object.keys(accounts).length > 0 ? accounts : undefined
+          }
+
+          if (nextProvider.credentials || nextProvider.settings || (nextProvider.accounts && Object.keys(nextProvider.accounts).length > 0)) {
+            providers[definition.id] = nextProvider
+          } else {
+            delete providers[definition.id]
+          }
+        }
 
         const defaults = {...config.defaults}
-        if (defaults.provider === definition.id) delete defaults.provider
+        if (defaults.provider === definition.id && providers[definition.id] === undefined) delete defaults.provider
 
         return {
           ...config,
@@ -51,7 +80,7 @@ export default class ProvidersDisconnect extends Command {
       })
 
       const overrides = envOverrides(definition)
-      out.result({configPath: getConfigPath(), environmentOverrides: overrides, provider: definition.id, removed})
+      out.result({account, configPath: getConfigPath(), environmentOverrides: overrides, provider: definition.id, removed})
       if (overrides.length > 0) out.warn(`${definition.displayName} environment credentials are still set: ${overrides.join(', ')}.`)
       out.success(removed ? `${definition.displayName} credentials removed from ${getConfigPath()}.` : `${definition.displayName} was not connected.`)
     } catch (error) {

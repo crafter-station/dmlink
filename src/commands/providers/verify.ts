@@ -1,7 +1,8 @@
 import {Args, Command} from '@oclif/core'
 
-import {jsonFlag} from '../../lib/flags.js'
+import {accountFlag, jsonFlag} from '../../lib/flags.js'
 import {createOutput, outputError} from '../../lib/output.js'
+import {isDefaultProviderAccount, normalizeProviderAccount} from '../../lib/providers/core/config.js'
 import {createProvider} from '../../lib/providers/registry.js'
 
 export default class ProvidersVerify extends Command {
@@ -12,6 +13,7 @@ export default class ProvidersVerify extends Command {
   static description = 'Verify saved DNS provider credentials.'
 
   static flags = {
+    account: accountFlag,
     json: jsonFlag,
   }
 
@@ -20,9 +22,10 @@ export default class ProvidersVerify extends Command {
     const out = createOutput({json: flags.json})
 
     try {
-      const provider = await createProvider(args.provider)
+      const account = normalizeProviderAccount(flags.account)
+      const provider = await createProvider(args.provider, {account})
       const health = await provider.verifyCredentials()
-      out.result({health, provider: provider.id})
+      out.result({account, health, isDefaultAccount: isDefaultProviderAccount(account), provider: provider.id})
       out.success(`${provider.name} credentials verified.`)
     } catch (error) {
       outputError(out.json, error, 'PROVIDER_AUTH_FAILED')

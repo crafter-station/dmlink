@@ -322,6 +322,141 @@ describe('link', () => {
     expect(result.records).to.deep.equal([{name: '@', proxied: false, ttl: 3600, type: 'A', value: '76.76.21.21'}])
   })
 
+  it('uses a named provider account when linking with --account', async () => {
+    await saveConfig({
+      providers: {
+        spaceship: {
+          accounts: {work: {credentials: {apiKey: 'work_key', apiSecret: 'work_secret'}}},
+          credentials: {apiKey: 'default_key', apiSecret: 'default_secret'},
+        },
+      },
+    })
+
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input))
+      const headers = init?.headers as Record<string, string>
+      if (url.hostname === 'spaceship.dev' && url.pathname === '/api/v1/domains') {
+        expect(headers['X-Api-Key']).to.equal('work_key')
+        return jsonResponse({items: [{name: 'example.com'}], total: 1})
+      }
+
+      throw new Error(`Unexpected request: ${url.href}`)
+    }) as typeof fetch
+
+    const result = await linkDomain({account: 'work', domain: 'app.example.com', dryRun: true, project: 'prj_123', provider: 'spaceship'})
+
+    expect(result.provider).to.equal('spaceship')
+    expect(result.account).to.equal('work')
+    expect(result.accountInferred).to.equal(false)
+    expect(result.isDefaultAccount).to.equal(false)
+    expect(result.zoneDomain).to.equal('example.com')
+  })
+
+  it('reports ambiguous zone ownership across accounts for the same provider', async () => {
+    await saveConfig({
+      providers: {
+        spaceship: {
+          accounts: {work: {credentials: {apiKey: 'work_key', apiSecret: 'work_secret'}}},
+          credentials: {apiKey: 'default_key', apiSecret: 'default_secret'},
+        },
+      },
+    })
+
+    globalThis.fetch = (async (input) => {
+      const url = new URL(String(input))
+      if (url.hostname === 'spaceship.dev' && url.pathname === '/api/v1/domains') {
+        return jsonResponse({items: [{name: 'example.com'}], total: 1})
+      }
+
+      throw new Error(`Unexpected request: ${url.href}`)
+    }) as typeof fetch
+
+    let error: unknown
+    try {
+      await linkDomain({domain: 'app.example.com', dryRun: true, project: 'prj_123', provider: 'spaceship'})
+    } catch (error_) {
+      error = error_
+    }
+
+    expect(error).to.be.instanceOf(DoomainError)
+    expect((error as DoomainError).code).to.equal('PROVIDER_ZONE_AMBIGUOUS')
+    expect((error as DoomainError).details).to.deep.equal({
+      candidates: [
+        {account: 'default', isDefaultAccount: true, provider: 'spaceship', providerName: 'Spaceship', zoneDomain: 'example.com'},
+        {account: 'work', isDefaultAccount: false, provider: 'spaceship', providerName: 'Spaceship', zoneDomain: 'example.com'},
+      ],
+      domain: 'app.example.com',
+    })
+  })
+
+  it('uses the longest matching zone across configured provider accounts', async () => {
+    await saveConfig({
+      providers: {
+        spaceship: {
+          accounts: {work: {credentials: {apiKey: 'work_key', apiSecret: 'work_secret'}}},
+          credentials: {apiKey: 'default_key', apiSecret: 'default_secret'},
+        },
+      },
+    })
+
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input))
+      const headers = init?.headers as Record<string, string>
+      if (url.hostname === 'spaceship.dev' && url.pathname === '/api/v1/domains') {
+        return headers['X-Api-Key'] === 'work_key'
+          ? jsonResponse({items: [{name: 'dev.example.com'}], total: 1})
+          : jsonResponse({items: [{name: 'example.com'}], total: 1})
+      }
+
+      throw new Error(`Unexpected request: ${url.href}`)
+    }) as typeof fetch
+
+    const result = await linkDomain({domain: 'api.dev.example.com', dryRun: true, project: 'prj_123'})
+
+    expect(result.provider).to.equal('spaceship')
+    expect(result.providerInferred).to.equal(true)
+    expect(result.account).to.equal('work')
+    expect(result.accountInferred).to.equal(true)
+    expect(result.zoneDomain).to.equal('dev.example.com')
+    expect(result.recordName).to.equal('api')
+  })
+
+  it('fails clearly when an explicit named provider account is missing credentials', async () => {
+    await saveConfig({providers: {spaceship: {credentials: {apiKey: 'default_key', apiSecret: 'default_secret'}}}})
+
+    let error: unknown
+    try {
+      await linkDomain({account: 'work', domain: 'app.example.com', dryRun: true, project: 'prj_123', provider: 'spaceship'})
+    } catch (error_) {
+      error = error_
+    }
+
+    expect(error).to.be.instanceOf(DoomainError)
+    expect((error as DoomainError).code).to.equal('MISSING_CREDENTIALS')
+    expect((error as DoomainError).details).to.deep.equal({account: 'work', provider: 'spaceship'})
+  })
+
+  it('treats legacy Spaceship credentials as the default account', async () => {
+    await saveConfig({providers: {spaceship: {apiKey: 'legacy_key', apiSecret: 'legacy_secret'}}})
+
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input))
+      const headers = init?.headers as Record<string, string>
+      if (url.hostname === 'spaceship.dev' && url.pathname === '/api/v1/domains') {
+        expect(headers['X-Api-Key']).to.equal('legacy_key')
+        return jsonResponse({items: [{name: 'example.com'}], total: 1})
+      }
+
+      throw new Error(`Unexpected request: ${url.href}`)
+    }) as typeof fetch
+
+    const result = await linkDomain({domain: 'app.example.com', dryRun: true, project: 'prj_123', provider: 'spaceship'})
+
+    expect(result.account).to.equal('default')
+    expect(result.isDefaultAccount).to.equal(true)
+    expect(result.zoneDomain).to.equal('example.com')
+  })
+
   it('reports ambiguous zone ownership across providers', async () => {
     process.env.CLOUDFLARE_API_TOKEN = 'cloudflare_token'
     process.env.CLOUDFLARE_ACCOUNT_ID = 'account_123'
@@ -349,8 +484,8 @@ describe('link', () => {
     expect((error as DoomainError).code).to.equal('PROVIDER_ZONE_AMBIGUOUS')
     expect((error as DoomainError).details).to.deep.equal({
       candidates: [
-        {provider: 'namecheap', providerName: 'Namecheap', zoneDomain: 'example.com'},
-        {provider: 'cloudflare', providerName: 'Cloudflare', zoneDomain: 'example.com'},
+        {account: 'default', isDefaultAccount: true, provider: 'namecheap', providerName: 'Namecheap', zoneDomain: 'example.com'},
+        {account: 'default', isDefaultAccount: true, provider: 'cloudflare', providerName: 'Cloudflare', zoneDomain: 'example.com'},
       ],
       domain: 'app.example.com',
     })
@@ -396,10 +531,10 @@ describe('link', () => {
     expect((error as DoomainError).details).to.deep.include({
       domain: 'app.example.com',
       recovery:
-        'Retry with --provider <id> only if another configured provider owns this zone. Otherwise connect the DNS provider that owns this domain.',
+        'Retry with --provider <id> --account <alias> only if another configured provider account owns this zone. Otherwise connect the DNS provider account that owns this domain.',
     })
     expect((error as DoomainError).details).to.deep.include({
-      searchedZones: [{displayName: 'Spaceship', id: 'spaceship', zones: ['other.dev']}],
+      searchedZones: [{account: 'default', displayName: 'Spaceship', id: 'spaceship', isDefaultAccount: true, zones: ['other.dev']}],
     })
   })
 

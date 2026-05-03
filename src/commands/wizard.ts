@@ -7,8 +7,8 @@ import {jsonFlag} from '../lib/flags.js'
 import {createLinkPlan, linkDomain} from '../lib/link-domain.js'
 import {detectLocalVercelProject} from '../lib/local-vercel.js'
 import {createOutput, outputError} from '../lib/output.js'
+import {DEFAULT_PROVIDER_ACCOUNT, listConfiguredProviderAccounts, type ProviderAccountRef} from '../lib/providers/core/config.js'
 import {createProvider, getProviderDefinition, listProviderDefinitions} from '../lib/providers/registry.js'
-import {isProviderConfigured} from '../lib/providers/status.js'
 import type {CredentialDefinition, DnsProviderDefinition, DnsRecordInput, DnsZone} from '../lib/providers/types.js'
 import {listGlobalVercelTokens, type GlobalVercelToken} from '../lib/vercel-auth.js'
 import {createVercelClient, type VercelTeam} from '../lib/vercel.js'
@@ -34,8 +34,10 @@ async function promptRequired(message: string, opts: {password?: boolean; placeh
 }
 
 interface ProviderDomainOption {
+  account: string
   domain: string
   id: string
+  isDefaultAccount: boolean
   providerId: string
   providerName: string
 }
@@ -90,7 +92,7 @@ async function promptProviderDefinition(
   const selected = await p.select({
     message: 'Choose DNS provider',
     options: definitions.map((definition) => ({
-      hint: isProviderConfigured(definition, config) ? 'Connected' : 'Not connected',
+      hint: listConfiguredProviderAccounts(config, definition).length > 0 ? 'Connected' : 'Not connected',
       label: definition.displayName,
       value: definition.id,
     })),
@@ -105,19 +107,25 @@ function showProviderSetup(definition: DnsProviderDefinition): void {
   p.note(definition.setup.notes.join('\n'), `${definition.displayName} setup`)
 }
 
-async function listProviderDomainOptions(definition: DnsProviderDefinition): Promise<ProviderDomainOption[]> {
-  const provider = await createProvider(definition.id)
+async function listProviderDomainOptions(definition: DnsProviderDefinition, account: ProviderAccountRef): Promise<ProviderDomainOption[]> {
+  const provider = await createProvider(definition.id, {account: account.account})
   const zones = await provider.listZones()
-  return zones.map((zone) => toProviderDomainOption(definition, zone))
+  return zones.map((zone) => toProviderDomainOption(definition, account, zone))
 }
 
-function toProviderDomainOption(definition: DnsProviderDefinition, zone: DnsZone): ProviderDomainOption {
+function toProviderDomainOption(definition: DnsProviderDefinition, account: ProviderAccountRef, zone: DnsZone): ProviderDomainOption {
   return {
+    account: account.account,
     domain: zone.name,
-    id: `${definition.id}:${zone.name}`,
+    id: `${definition.id}:${account.account}:${zone.name}`,
+    isDefaultAccount: account.isDefaultAccount,
     providerId: definition.id,
     providerName: definition.displayName,
   }
+}
+
+function providerAccountLabel(option: Pick<ProviderDomainOption, 'account' | 'isDefaultAccount' | 'providerName'>): string {
+  return option.isDefaultAccount ? option.providerName : `${option.providerName}/${option.account}`
 }
 
 function projectLabel(project: {id: string; name?: string}): string {
@@ -274,11 +282,13 @@ export default class Wizard extends Command {
 
       p.log.success(`Vercel ready: ${projectDisplay}`)
 
-      const configuredProviderDefinitions = providerDefinitions.filter((definition) => isProviderConfigured(definition, config))
+      const configuredProviderAccounts = providerDefinitions.flatMap((definition) =>
+        listConfiguredProviderAccounts(config, definition).map((account) => ({account, definition})),
+      )
       const providerFailures: string[] = []
       const domainOptions: ProviderDomainOption[] = []
 
-      if (configuredProviderDefinitions.length === 0) {
+      if (configuredProviderAccounts.length === 0) {
         p.log.info('No DNS provider is configured yet. Connect one to continue.')
         const selectedDefinition = await promptProviderDefinition(providerDefinitions, config)
         if (!selectedDefinition) return
@@ -295,7 +305,11 @@ export default class Wizard extends Command {
           `Connected ${selectedDefinition.displayName} and loaded ${zones.length} domain${zones.length === 1 ? '' : 's'}`,
         )
         activeSpinner = undefined
-        domainOptions.push(...zones.map((zone) => toProviderDomainOption(selectedDefinition, zone)))
+        domainOptions.push(
+          ...zones.map((zone) =>
+            toProviderDomainOption(selectedDefinition, {account: DEFAULT_PROVIDER_ACCOUNT, isDefaultAccount: true, providerId: selectedDefinition.id}, zone),
+          ),
+        )
 
         await updateConfig((current) => ({
           ...current,
@@ -307,14 +321,15 @@ export default class Wizard extends Command {
         const domainSpinner = p.spinner()
         activeSpinner = domainSpinner
         domainSpinner.start(
-          `Loading domains from ${configuredProviderDefinitions.length} provider${configuredProviderDefinitions.length === 1 ? '' : 's'}`,
+          `Loading domains from ${configuredProviderAccounts.length} provider account${configuredProviderAccounts.length === 1 ? '' : 's'}`,
         )
 
-        for (const definition of configuredProviderDefinitions) {
+        for (const {account, definition} of configuredProviderAccounts) {
           try {
-            domainOptions.push(...(await listProviderDomainOptions(definition)))
+            domainOptions.push(...(await listProviderDomainOptions(definition, account)))
           } catch (error) {
-            providerFailures.push(`${definition.displayName}: ${error instanceof Error ? error.message : String(error)}`)
+            const label = account.isDefaultAccount ? definition.displayName : `${definition.displayName}/${account.account}`
+            providerFailures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`)
           }
         }
 
@@ -349,14 +364,14 @@ export default class Wizard extends Command {
           placeholder: 'Type to filter domains...',
           maxItems: 10,
           initialValue,
-          options: domainOptions.map((option) => ({label: option.domain, value: option.id, hint: option.providerName})),
+          options: domainOptions.map((option) => ({label: option.domain, value: option.id, hint: providerAccountLabel(option)})),
         })
         const selectedId = cancelIfNeeded(selectedDomainId)
         if (selectedId === null) return
         selectedDomain = domainOptions.find((option) => option.id === selectedId) ?? domainOptions[0]
       }
 
-      p.log.info(`Using domain ${selectedDomain.domain} from ${selectedDomain.providerName}.`)
+      p.log.info(`Using domain ${selectedDomain.domain} from ${providerAccountLabel(selectedDomain)}.`)
 
       const domain = selectedDomain.domain
 
@@ -383,9 +398,9 @@ export default class Wizard extends Command {
       }
 
       const fullDomain = apex ? domain : `${subdomain}.${domain}`
-      const preview = await createLinkPlan({provider: selectedDomain.providerId, domain, subdomain, apex, project})
+      const preview = await createLinkPlan({account: selectedDomain.account, provider: selectedDomain.providerId, domain, subdomain, apex, project})
       p.note(
-        [`Vercel: add ${preview.domain} to ${projectDisplay}`, ...preview.records.map((record) => recordPreview(record, selectedDomain.providerName))].join(
+        [`Vercel: add ${preview.domain} to ${projectDisplay}`, ...preview.records.map((record) => recordPreview(record, providerAccountLabel(selectedDomain)))].join(
           '\n',
         ),
         'Preview',
@@ -401,6 +416,7 @@ export default class Wizard extends Command {
       activeSpinner = spinner
       spinner.start('Adding domain to Vercel')
       const result = await linkDomain({
+        account: selectedDomain.account,
         provider: selectedDomain.providerId,
         domain,
         subdomain,

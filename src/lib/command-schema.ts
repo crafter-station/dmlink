@@ -1,6 +1,9 @@
 import {listProviderStatuses, type ProviderStatus} from './providers/status.js'
 
-export type ProviderConnectionStatus = Pick<ProviderStatus, 'configured' | 'default' | 'displayName' | 'docsUrl' | 'id'>
+export type ProviderConnectionStatus = Pick<
+  ProviderStatus,
+  'account' | 'configured' | 'default' | 'displayName' | 'docsUrl' | 'id' | 'isDefaultAccount'
+>
 
 export interface CommandSchema {
   name: string
@@ -34,6 +37,7 @@ export const commandSchemas: CommandSchema[] = [
       'doomain link --domain app.example.com --project my-app --json',
       'doomain link --domain example.com --subdomain app --project my-app --json',
       'doomain link --provider spaceship --domain example.com --apex --project my-app --dry-run --json',
+      'doomain link app.example.com --provider spaceship --account work --project my-app --json',
     ],
     agentHint:
       'For agent use, try `doomain link <domain> --json` first. Do not inspect project files, run provider status, or use --dry-run unless the user explicitly asks for a preview. The command infers project/provider and returns structured recovery errors when inference fails.',
@@ -51,6 +55,7 @@ export const commandSchemas: CommandSchema[] = [
     flags: [
       {name: 'json', type: 'boolean', description: 'Output a single JSON object and never prompt.'},
       {name: 'provider', type: 'string', description: 'DNS provider id. Inferred from the target domain when omitted.'},
+      {name: 'account', type: 'string', description: 'DNS provider account alias. Defaults to the provider default account.'},
       {name: 'domain', type: 'string', description: 'Target domain or base zone, for example app.example.com or example.com.'},
       {name: 'subdomain', type: 'string', description: 'Subdomain to add.'},
       {name: 'apex', type: 'boolean', description: 'Use the root/apex domain.'},
@@ -67,12 +72,14 @@ export const commandSchemas: CommandSchema[] = [
     examples: [
       'doomain providers connect',
       'doomain providers connect spaceship --credential apiKey=key --credential apiSecret=secret --json',
+      'doomain providers connect spaceship --account work --credential apiKey=key --credential apiSecret=secret --json',
       'doomain providers connect namecheap --credential apiUser=user --credential apiKey=key --credential clientIp=127.0.0.1 --json',
       'doomain providers connect cloudflare --credential apiToken=token --credential accountId=account_id --json',
       'doomain providers connect hostinger --credential apiToken=token --json',
     ],
     flags: [
       {name: 'json', type: 'boolean', description: 'Output a single JSON object and never prompt.'},
+      {name: 'account', type: 'string', description: 'DNS provider account alias. Defaults to the provider default account.'},
       {name: 'credential', type: 'string', description: 'Provider credential as key=value. Can be repeated.'},
       {name: 'api-key', type: 'string', description: 'Spaceship API key.'},
       {name: 'api-secret', type: 'string', description: 'Spaceship API secret.'},
@@ -82,9 +89,10 @@ export const commandSchemas: CommandSchema[] = [
   {
     name: 'providers add',
     description: 'Alias for providers connect.',
-    examples: ['doomain providers add', 'doomain providers add namecheap'],
+    examples: ['doomain providers add', 'doomain providers add namecheap', 'doomain providers add spaceship --account work'],
     flags: [
       {name: 'json', type: 'boolean', description: 'Output a single JSON object and never prompt.'},
+      {name: 'account', type: 'string', description: 'DNS provider account alias. Defaults to the provider default account.'},
       {name: 'credential', type: 'string', description: 'Provider credential as key=value. Can be repeated.'},
       {name: 'no-verify', type: 'boolean', description: 'Save credentials without verifying them first.'},
     ],
@@ -101,17 +109,29 @@ export const commandSchemas: CommandSchema[] = [
   {
     name: 'providers disconnect',
     description: 'Remove saved DNS provider credentials locally.',
-    examples: ['doomain providers disconnect namecheap --json', 'doomain providers disconnect cloudflare --json', 'doomain providers disconnect hostinger --json'],
+    examples: [
+      'doomain providers disconnect namecheap --json',
+      'doomain providers disconnect cloudflare --json',
+      'doomain providers disconnect spaceship --account work --json',
+      'doomain providers disconnect hostinger --json',
+    ],
     flags: [
       {name: 'json', type: 'boolean', description: 'Output a single JSON object and never prompt.'},
+      {name: 'account', type: 'string', description: 'DNS provider account alias. Omit to remove all accounts for the provider.'},
     ],
   },
   {
     name: 'providers verify',
     description: 'Verify saved DNS provider credentials.',
-    examples: ['doomain providers verify spaceship --json', 'doomain providers verify namecheap --json', 'doomain providers verify hostinger --json'],
+    examples: [
+      'doomain providers verify spaceship --json',
+      'doomain providers verify spaceship --account work --json',
+      'doomain providers verify namecheap --json',
+      'doomain providers verify hostinger --json',
+    ],
     flags: [
       {name: 'json', type: 'boolean', description: 'Output a single JSON object and never prompt.'},
+      {name: 'account', type: 'string', description: 'DNS provider account alias. Defaults to the provider default account.'},
     ],
   },
   {
@@ -141,11 +161,13 @@ export function getCommandSchema(name?: string): CommandSchema[] | CommandSchema
 
 async function configuredProviders(): Promise<ProviderConnectionStatus[]> {
   return (await listProviderStatuses({verify: false})).map((provider) => ({
+    account: provider.account,
     configured: provider.configured,
     default: provider.default,
     displayName: provider.displayName,
     docsUrl: provider.docsUrl,
     id: provider.id,
+    isDefaultAccount: provider.isDefaultAccount,
   }))
 }
 

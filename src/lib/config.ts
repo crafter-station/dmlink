@@ -18,9 +18,13 @@ export interface VercelConfig {
   teamId?: string
 }
 
-export interface ProviderConfig {
+export interface ProviderAccountConfig {
   credentials?: Record<string, string>
   settings?: Record<string, unknown>
+}
+
+export interface ProviderConfig extends ProviderAccountConfig {
+  accounts?: Record<string, ProviderAccountConfig | undefined>
 }
 
 export interface SpaceshipProviderConfig extends ProviderConfig {

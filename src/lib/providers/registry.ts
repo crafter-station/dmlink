@@ -20,7 +20,7 @@ export function getProviderDefinition(id: string): DnsProviderDefinition {
   return definition
 }
 
-export async function createProvider(id: string): Promise<DnsProvider> {
+export async function createProvider(id: string, opts: {account?: string} = {}): Promise<DnsProvider> {
   const definition = getProviderDefinition(id)
-  return definition.create(await createProviderContext(definition))
+  return definition.create(await createProviderContext(definition, opts))
 }

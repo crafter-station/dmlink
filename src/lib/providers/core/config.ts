@@ -1,6 +1,33 @@
-import {loadConfig, type DoomainConfig} from '../../config.js'
+import {loadConfig, type DoomainConfig, type ProviderConfig} from '../../config.js'
 import {DoomainError} from '../../errors.js'
+import {ensureProviderAccount} from '../../validate.js'
 import type {CredentialDefinition, DnsProviderDefinition, ProviderContext} from './types.js'
+
+export const DEFAULT_PROVIDER_ACCOUNT = 'default'
+
+export interface ProviderAccountRef {
+  account: string
+  isDefaultAccount: boolean
+  providerId: string
+}
+
+export interface ProviderAccountOptions {
+  account?: string
+}
+
+export function normalizeProviderAccount(account?: string): string {
+  if (!account?.trim()) return DEFAULT_PROVIDER_ACCOUNT
+  return ensureProviderAccount(account)
+}
+
+export function isDefaultProviderAccount(account?: string): boolean {
+  return normalizeProviderAccount(account) === DEFAULT_PROVIDER_ACCOUNT
+}
+
+function providerConfig(config: DoomainConfig, providerId: string): ProviderConfig | undefined {
+  const value = config.providers?.[providerId]
+  return value && typeof value === 'object' ? (value as ProviderConfig) : undefined
+}
 
 function legacyCredential(config: DoomainConfig, providerId: string, key: string): string | undefined {
   if (providerId !== 'spaceship') return undefined
@@ -9,31 +36,79 @@ function legacyCredential(config: DoomainConfig, providerId: string, key: string
   return (legacy as Record<string, unknown>)[key] as string | undefined
 }
 
-export function getProviderCredentials(config: DoomainConfig, providerId: string): Record<string, string> {
-  const providerConfig = config.providers?.[providerId]
-  const credentials =
-    providerConfig && typeof providerConfig === 'object' && 'credentials' in providerConfig
-      ? ((providerConfig as {credentials?: Record<string, string>}).credentials ?? {})
-      : {}
-
-  return {...credentials}
+function credentialFromSavedConfig(config: DoomainConfig, providerId: string, account: string, key: string): string | undefined {
+  const credentials = getProviderCredentials(config, providerId, {account})
+  if (credentials[key]) return credentials[key]
+  if (account === DEFAULT_PROVIDER_ACCOUNT) return legacyCredential(config, providerId, key)
+  return undefined
 }
 
-export function getProviderCredential(config: DoomainConfig, providerId: string, credential: CredentialDefinition): string | undefined {
-  return process.env[credential.env] || getProviderCredentials(config, providerId)[credential.key] || legacyCredential(config, providerId, credential.key)
+export function getProviderCredentials(
+  config: DoomainConfig,
+  providerId: string,
+  opts: ProviderAccountOptions = {},
+): Record<string, string> {
+  const account = normalizeProviderAccount(opts.account)
+  const current = providerConfig(config, providerId)
+  const credentials = account === DEFAULT_PROVIDER_ACCOUNT ? current?.credentials : current?.accounts?.[account]?.credentials
+
+  return {...(credentials ?? {})}
 }
 
-export async function createProviderContext(definition: DnsProviderDefinition): Promise<ProviderContext> {
+export function getProviderCredential(
+  config: DoomainConfig,
+  providerId: string,
+  credential: CredentialDefinition,
+  opts: ProviderAccountOptions = {},
+): string | undefined {
+  const account = normalizeProviderAccount(opts.account)
+  return process.env[credential.env] || credentialFromSavedConfig(config, providerId, account, credential.key)
+}
+
+export function isProviderAccountConfigured(
+  definition: DnsProviderDefinition,
+  config: DoomainConfig,
+  opts: ProviderAccountOptions = {},
+): boolean {
+  return definition.credentials.every(
+    (credential) => credential.required === false || Boolean(getProviderCredential(config, definition.id, credential, opts)),
+  )
+}
+
+export function listConfiguredProviderAccounts(config: DoomainConfig, definition: DnsProviderDefinition): ProviderAccountRef[] {
+  const accounts: ProviderAccountRef[] = []
+
+  if (isProviderAccountConfigured(definition, config, {account: DEFAULT_PROVIDER_ACCOUNT})) {
+    accounts.push({account: DEFAULT_PROVIDER_ACCOUNT, isDefaultAccount: true, providerId: definition.id})
+  }
+
+  for (const account of Object.keys(providerConfig(config, definition.id)?.accounts ?? {}).sort()) {
+    const normalized = normalizeProviderAccount(account)
+    if (normalized === DEFAULT_PROVIDER_ACCOUNT) continue
+    if (!isProviderAccountConfigured(definition, config, {account: normalized})) continue
+    accounts.push({account: normalized, isDefaultAccount: false, providerId: definition.id})
+  }
+
+  return accounts
+}
+
+export async function createProviderContext(
+  definition: DnsProviderDefinition,
+  opts: ProviderAccountOptions = {},
+): Promise<ProviderContext> {
   const config = await loadConfig()
   const credentials: Record<string, string> = {}
+  const account = normalizeProviderAccount(opts.account)
 
   for (const credential of definition.credentials) {
-    const value = getProviderCredential(config, definition.id, credential)
+    const value = getProviderCredential(config, definition.id, credential, {account})
     if (value) credentials[credential.key] = value
     else if (credential.required !== false) {
+      const accountHint = account === DEFAULT_PROVIDER_ACCOUNT ? '' : ` for account ${account}`
       throw new DoomainError(
         'MISSING_CREDENTIALS',
-        `Missing ${definition.displayName} ${credential.label}. Run \`doomain providers connect ${definition.id}\` or set ${credential.env}.`,
+        `Missing ${definition.displayName} ${credential.label}${accountHint}. Run \`doomain providers connect ${definition.id}${account === DEFAULT_PROVIDER_ACCOUNT ? '' : ` --account ${account}`}\` or set ${credential.env}.`,
+        {account, provider: definition.id},
       )
     }
   }

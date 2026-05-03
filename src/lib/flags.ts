@@ -4,6 +4,8 @@ export const jsonFlag = Flags.boolean({description: 'Output a single JSON object
 
 export const providerFlag = Flags.string({description: 'DNS provider id. Inferred from the target domain when omitted.'})
 
+export const accountFlag = Flags.string({description: 'DNS provider account alias. Defaults to the provider default account.'})
+
 export const domainFlag = Flags.string({description: 'Target domain or base zone, for example app.example.com or example.com.'})
 
 export const subdomainFlag = Flags.string({description: 'Subdomain to add, for example app for app.example.com.'})

@@ -78,6 +78,15 @@ export function ensureProviderId(value: string): string {
   return provider
 }
 
+export function ensureProviderAccount(value: string): string {
+  const account = value.trim().toLowerCase()
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(account)) {
+    throw new DoomainError('INVALID_INPUT', `Invalid provider account alias: ${value}`)
+  }
+
+  return account
+}
+
 export function ensureProject(value?: string): string {
   const project = value?.trim()
   if (!project) throw new DoomainError('MISSING_ARGUMENT', 'Vercel project is required.')
